@@ -1,36 +1,129 @@
-import React from 'react';
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Card } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { ethers } from "ethers";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { useToast } from "@/hooks/use-toast";
+import { RiskPoolService } from "@/services/blockchain";
+import { useWallet } from "@/context/WalletContext";
 
 const RiskPool = () => {
-  const poolStats = {
-    totalLiquidity: "5,000,000",
-    activePolicies: "1,234",
-    averageAPY: "12.5",
-    utilizationRate: 75,
+  const { toast } = useToast();
+  const { signer, account } = useWallet();
+  const [loading, setLoading] = useState(false);
+  const [depositAmount, setDepositAmount] = useState("");
+  const [withdrawAmount, setWithdrawAmount] = useState("");
+  const [poolStats, setPoolStats] = useState({
+    totalLiquidity: "0",
+    userLiquidity: "0",
+    apy: 0,
+    rewards: "0",
+    activePolicies: "0",
+    utilizationRate: 0,
+  });
+
+  const riskPoolService = useMemo(() => signer ? new RiskPoolService(signer) : null, [signer]);
+
+  const loadPoolStats = useCallback(async () => {
+    if (!riskPoolService || !account) return;
+
+    try {
+      const [totalLiquidity, userLiquidity, apy, rewards] = await Promise.all([
+        riskPoolService.getTotalLiquidity(),
+        riskPoolService.getUserLiquidity(account),
+        riskPoolService.getAPY(),
+        riskPoolService.getRewards(),
+      ]);
+
+      setPoolStats({
+        totalLiquidity,
+        userLiquidity,
+        apy,
+        rewards,
+        activePolicies: "1,234", // TODO: Get from contract
+        utilizationRate: 75, // TODO: Calculate from contract data
+      });
+    } catch (error) {
+      console.error("Failed to load pool stats:", error);
+      toast({
+        title: "Error",
+        description: "Failed to load pool statistics",
+        variant: "destructive",
+      });
+    }
+  }, [riskPoolService, account, toast]);
+
+  useEffect(() => {
+    loadPoolStats();
+    // Set up an interval to refresh stats every 30 seconds
+    const interval = setInterval(loadPoolStats, 30000);
+    return () => clearInterval(interval);
+  }, [signer, account, loadPoolStats]);
+
+  const handleDeposit = async () => {
+    if (!riskPoolService) return;
+    setLoading(true);
+    try {
+      await riskPoolService.deposit(depositAmount);
+      toast({
+        title: "Success",
+        description: "Successfully deposited funds into the risk pool",
+      });
+      setDepositAmount("");
+      await loadPoolStats();
+    } catch (error) {
+      console.error("Failed to deposit:", error);
+      toast({
+        title: "Error",
+        description: "Failed to deposit funds",
+        variant: "destructive",
+      });
+    }
+    setLoading(false);
   };
 
-  const riskPools = [
-    {
-      name: "Smart Contract Cover",
-      liquidity: "2,500,000",
-      apy: "14.2",
-      utilization: 80,
-    },
-    {
-      name: "Stablecoin Depeg",
-      liquidity: "1,500,000",
-      apy: "11.8",
-      utilization: 65,
-    },
-    {
-      name: "Oracle Failure",
-      liquidity: "1,000,000",
-      apy: "10.5",
-      utilization: 55,
-    },
-  ];
+  const handleWithdraw = async () => {
+    if (!riskPoolService) return;
+    setLoading(true);
+    try {
+      await riskPoolService.withdraw(withdrawAmount);
+      toast({
+        title: "Success",
+        description: "Successfully withdrew funds from the risk pool",
+      });
+      setWithdrawAmount("");
+      await loadPoolStats();
+    } catch (error) {
+      console.error("Failed to withdraw:", error);
+      toast({
+        title: "Error",
+        description: "Failed to withdraw funds",
+        variant: "destructive",
+      });
+    }
+    setLoading(false);
+  };
+
+  const handleClaimRewards = async () => {
+    if (!riskPoolService) return;
+    setLoading(true);
+    try {
+      await riskPoolService.claimRewards();
+      toast({
+        title: "Success",
+        description: "Successfully claimed rewards",
+      });
+      await loadPoolStats();
+    } catch (error) {
+      console.error("Failed to claim rewards:", error);
+      toast({
+        title: "Error",
+        description: "Failed to claim rewards",
+        variant: "destructive",
+      });
+    }
+    setLoading(false);
+  };
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -43,12 +136,12 @@ const RiskPool = () => {
           <p className="text-2xl font-bold">${poolStats.totalLiquidity}</p>
         </Card>
         <Card className="p-6">
-          <h3 className="text-sm text-muted-foreground mb-2">Active Policies</h3>
-          <p className="text-2xl font-bold">{poolStats.activePolicies}</p>
+          <h3 className="text-sm text-muted-foreground mb-2">Your Liquidity</h3>
+          <p className="text-2xl font-bold">${poolStats.userLiquidity}</p>
         </Card>
         <Card className="p-6">
-          <h3 className="text-sm text-muted-foreground mb-2">Average APY</h3>
-          <p className="text-2xl font-bold">{poolStats.averageAPY}%</p>
+          <h3 className="text-sm text-muted-foreground mb-2">Current APY</h3>
+          <p className="text-2xl font-bold">{poolStats.apy}%</p>
         </Card>
         <Card className="p-6">
           <h3 className="text-sm text-muted-foreground mb-2">Utilization Rate</h3>
@@ -59,30 +152,73 @@ const RiskPool = () => {
         </Card>
       </div>
 
-      {/* Individual Risk Pools */}
-      <h2 className="text-2xl font-semibold mb-6">Risk Pools</h2>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {riskPools.map((pool, index) => (
-          <Card key={index} className="p-6">
-            <h3 className="text-xl font-semibold mb-4">{pool.name}</h3>
-            <div className="space-y-4">
-              <div>
-                <p className="text-sm text-muted-foreground">Liquidity</p>
-                <p className="text-xl font-bold">${pool.liquidity}</p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Current APY</p>
-                <p className="text-xl font-bold text-green-600">{pool.apy}%</p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground mb-2">Utilization</p>
-                <Progress value={pool.utilization} />
-                <p className="text-sm mt-1">{pool.utilization}%</p>
+      {/* Liquidity Management */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
+        <Card className="p-6">
+          <h3 className="text-xl font-semibold mb-4">Deposit</h3>
+          <div className="space-y-4">
+            <div>
+              <p className="text-sm text-muted-foreground mb-2">Amount to Deposit</p>
+              <div className="flex gap-2">
+                <Input
+                  type="number"
+                  value={depositAmount}
+                  onChange={(e) => setDepositAmount(e.target.value)}
+                  placeholder="Enter amount"
+                  disabled={loading || !signer}
+                />
+                <Button
+                  onClick={handleDeposit}
+                  disabled={loading || !signer || !depositAmount}
+                >
+                  Deposit
+                </Button>
               </div>
             </div>
-          </Card>
-        ))}
+          </div>
+        </Card>
+
+        <Card className="p-6">
+          <h3 className="text-xl font-semibold mb-4">Withdraw</h3>
+          <div className="space-y-4">
+            <div>
+              <p className="text-sm text-muted-foreground mb-2">Amount to Withdraw</p>
+              <div className="flex gap-2">
+                <Input
+                  type="number"
+                  value={withdrawAmount}
+                  onChange={(e) => setWithdrawAmount(e.target.value)}
+                  placeholder="Enter amount"
+                  disabled={loading || !signer}
+                />
+                <Button
+                  onClick={handleWithdraw}
+                  disabled={loading || !signer || !withdrawAmount}
+                >
+                  Withdraw
+                </Button>
+              </div>
+            </div>
+          </div>
+        </Card>
       </div>
+
+      {/* Rewards */}
+      <Card className="p-6 mb-12">
+        <h3 className="text-xl font-semibold mb-4">Rewards</h3>
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm text-muted-foreground">Available Rewards</p>
+            <p className="text-2xl font-bold">${poolStats.rewards}</p>
+          </div>
+          <Button
+            onClick={handleClaimRewards}
+            disabled={loading || !signer || Number(poolStats.rewards) <= 0}
+          >
+            Claim Rewards
+          </Button>
+        </div>
+      </Card>
     </div>
   );
 };
