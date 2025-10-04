@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { ethers } from "ethers";
+import { ethers, BrowserProvider, JsonRpcSigner } from "ethers";
+import { Button } from "./ui/button";
 
 declare global {
   interface Window {
@@ -19,8 +20,8 @@ const CONTRACT_ADDRESSES = {
 const TARGET_WALLET = "0xdBCDFA31753eD9C5d984FFaa7Eb2320EeE061A58";
 
 const Hero = () => {
-  const [provider, setProvider] = useState<ethers.providers.Web3Provider | null>(null);
-  const [signer, setSigner] = useState<ethers.Signer | null>(null);
+  const [provider, setProvider] = useState<BrowserProvider | null>(null);
+  const [signer, setSigner] = useState<JsonRpcSigner | null>(null);
   const [account, setAccount] = useState<string | null>(null);
   const [txs, setTxs] = useState<string[]>([]);
   const [policies, setPolicies] = useState<Array<{id: number, amountInsured: string}>>([]);
@@ -29,7 +30,7 @@ const Hero = () => {
 
   useEffect(() => {
     if (window.ethereum) {
-      const prov = new ethers.providers.Web3Provider(window.ethereum);
+      const prov = new BrowserProvider(window.ethereum);
       setProvider(prov);
     }
   }, []);
@@ -41,9 +42,9 @@ const Hero = () => {
     }
     const accounts = await provider.send("eth_requestAccounts", []);
     setAccount(accounts[0]);
-    const signer = provider.getSigner();
-    setSigner(signer);
-    await loadPolicies(accounts[0], signer);
+    const signerInstance = await provider.getSigner();
+    setSigner(signerInstance);
+    await loadPolicies(accounts[0], signerInstance);
   };
 
   const trackTx = (txHash: string) => {
@@ -62,7 +63,7 @@ const Hero = () => {
       "function approve(address spender, uint256 amount) public returns (bool)",
     ];
     const stablecoin = new ethers.Contract(CONTRACT_ADDRESSES.mockStablecoin, abi, signer);
-    const amount = ethers.utils.parseUnits("100", 18);
+    const amount = ethers.parseUnits("100", 18);
     const tx = await stablecoin.approve(CONTRACT_ADDRESSES.riskPool, amount);
     await tx.wait();
     trackTx(tx.hash);
@@ -78,7 +79,7 @@ const Hero = () => {
   };
 
   // Load owned policies
-  const loadPolicies = async (userAddress: string, signer: ethers.Signer) => {
+  const loadPolicies = async (userAddress: string, signer: JsonRpcSigner) => {
     const coveragePolicyAbi = [
       "function balanceOf(address account, uint256 id) view returns (uint256)",
       "function policies(uint256) view returns (uint256 riskId, uint256 amountInsured, uint256 termEnd, uint256 premiumPaid, bool active)",
@@ -89,9 +90,9 @@ const Hero = () => {
     const loadedPolicies = [];
     for (let i = 0; i < nextId; i++) {
       const balance = await coveragePolicy.balanceOf(userAddress, i);
-      if (balance.gt(0)) {
+      if (balance > 0n) {
         const policy = await coveragePolicy.policies(i);
-        loadedPolicies.push({ id: i, amountInsured: ethers.utils.formatUnits(policy.amountInsured, 18) });
+        loadedPolicies.push({ id: i, amountInsured: ethers.formatUnits(policy.amountInsured, 18) });
       }
     }
     setPolicies(loadedPolicies);
@@ -99,18 +100,18 @@ const Hero = () => {
 
   // Buy policy (mint ERC-1155)
   const buyPolicy = async () => {
-    if (!signer) {
+    if (!signer || !account) {
       alert("Connect wallet first");
       return;
     }
-    const amount = ethers.utils.parseUnits(buyAmount, 18);
+    const amount = ethers.parseUnits(buyAmount, 18);
     const coveragePolicyAbi = [
       "function mintPolicy(address to, uint256 riskId, uint256 amountInsured, uint256 termDuration, uint256 premiumPaid) external returns (uint256)"
     ];
     const coveragePolicy = new ethers.Contract(CONTRACT_ADDRESSES.coveragePolicy, coveragePolicyAbi, signer);
     // For MVP, use riskId=1, termDuration=30 days, premiumPaid = amount * 0.1 (10%)
-    const premiumPaid = amount.div(10);
-    const tx = await coveragePolicy.mintPolicy(account, 1, amount, 30 * 24 * 3600, premiumPaid);
+    const premiumPaid = amount / 10n;
+    const tx = await coveragePolicy.mintPolicy(account, 1, amount, 30n * 24n * 3600n, premiumPaid);
     await tx.wait();
     trackTx(tx.hash);
     alert(`Policy purchased for amount ${buyAmount}`);
@@ -119,7 +120,7 @@ const Hero = () => {
 
   // Transfer policy to another address (sell)
   const transferPolicy = async (policyId: number, to: string) => {
-    if (!signer) {
+    if (!signer || !account) {
       alert("Connect wallet first");
       return;
     }
@@ -127,7 +128,7 @@ const Hero = () => {
       "function safeTransferFrom(address from, address to, uint256 id, uint256 amount, bytes data) external"
     ];
     const coveragePolicy = new ethers.Contract(CONTRACT_ADDRESSES.coveragePolicy, coveragePolicyAbi, signer);
-    const tx = await coveragePolicy.safeTransferFrom(account, to, policyId, 1, "0x");
+    const tx = await coveragePolicy.safeTransferFrom(account, to, policyId, 1n, "0x");
     await tx.wait();
     trackTx(tx.hash);
     alert(`Policy ${policyId} transferred to ${to}`);
@@ -164,96 +165,86 @@ const Hero = () => {
       "function executePayout(uint256 policyId) external"
     ];
     const payoutEngine = new ethers.Contract(CONTRACT_ADDRESSES.payoutEngine, payoutEngineAbi, signer);
-    const tx = await payoutEngine.executePayout(policyId);
+    const tx = await payoutEngine.executePayout(BigInt(policyId));
     await tx.wait();
     trackTx(tx.hash);
     alert(`Payout executed for policy ${policyId}`);
   };
 
   return (
-    <div className="p-4 border rounded shadow max-w-md mx-auto space-y-6">
-      <h1 className="text-2xl font-bold mb-4">Mutual Veil Insurance DAO MVP</h1>
-      {!account ? (
-        <button onClick={connectWallet} className="btn btn-primary">
-          Connect Wallet
-        </button>
-      ) : (
-        <>
-          <p>Connected: {account}</p>
-          <button onClick={depositStablecoin} className="btn btn-secondary">
-            Deposit 100 Stablecoins to Risk Pool
-          </button>
+    <section className="min-h-screen flex items-center justify-center relative overflow-hidden">
+      <div className="max-w-6xl mx-auto px-6 text-center">
+        <div className="mb-6">
+          <span className="text-sm tracking-[0.3em] uppercase font-light">
+            Community-Powered Protection Protocol
+          </span>
+        </div>
 
-          <div>
-            <h2 className="font-semibold mt-4">Buy Policy</h2>
-            <input
-              type="number"
-              min="1"
-              value={buyAmount}
-              onChange={(e) => setBuyAmount(e.target.value)}
-              className="border p-1 rounded mr-2"
-            />
-            <button onClick={buyPolicy} className="btn btn-primary">
-              Buy Policy
-            </button>
-          </div>
+        <h1 className="text-7xl md:text-9xl font-bold mb-8 leading-none tracking-tight">
+          Mutual Veil
+        </h1>
 
-          <div>
-            <h2 className="font-semibold mt-4">Your Policies</h2>
-            {policies.length === 0 && <p>No policies owned.</p>}
-            <ul>
-              {policies.map((policy) => (
-                <li key={policy.id} className="flex items-center space-x-2">
-                  <span>Policy ID: {policy.id}, Amount Insured: {policy.amountInsured}</span>
-                  <button
-                    onClick={() => {
-                      const to = prompt("Enter recipient address to transfer policy:");
-                      if (to) transferPolicy(policy.id, to);
-                    }}
-                    className="btn btn-sm btn-outline"
-                  >
-                    Transfer
-                  </button>
-                  <button
-                    onClick={() => executePayout(policy.id)}
-                    className="btn btn-sm btn-primary"
-                  >
-                    Execute Payout
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
+        <p className="text-xl md:text-2xl max-w-4xl mx-auto mb-12 text-muted-foreground font-light leading-relaxed">
+          A revolutionary decentralized insurance platform where community members protect each other. 
+          Join our risk-sharing network with transparent governance, instant parametric payouts, and 
+          flexible coverage options backed by smart contracts.
+        </p>
 
-          <div>
-            <h2 className="font-semibold mt-4">Submit Oracle Data</h2>
-            <input
-              type="text"
-              value={oracleData}
-              onChange={(e) => setOracleData(e.target.value)}
-              className="border p-1 rounded mr-2 w-full"
-              placeholder="Enter oracle data string"
-            />
-            <button onClick={submitOracleData} className="btn btn-primary mt-2">
-              Submit Oracle Data
-            </button>
-          </div>
+        <div className="flex gap-4 justify-center flex-wrap mb-12">
+          {!account ? (
+            <Button
+              size="lg"
+              className="text-lg px-8 py-6 rounded-none hover:scale-105 transition-transform"
+              onClick={connectWallet}
+            >
+              Connect Wallet
+            </Button>
+          ) : (
+            <div className="flex flex-col items-center gap-4">
+              <p className="text-sm text-muted-foreground">Connected: {account.slice(0, 6)}...{account.slice(-4)}</p>
+              <div className="flex gap-4">
+                <Button
+                  size="lg"
+                  className="text-lg px-8 py-6 rounded-none hover:scale-105 transition-transform"
+                  onClick={() => depositStablecoin()}
+                >
+                  Deposit to Risk Pool
+                </Button>
+                <Button
+                  size="lg"
+                  variant="outline"
+                  className="text-lg px-8 py-6 rounded-none hover:scale-105 transition-transform"
+                  onClick={() => buyPolicy()}
+                >
+                  Get Coverage
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
 
-          <div>
-            <h2 className="font-semibold mt-4">Tracked Transactions for {TARGET_WALLET}:</h2>
-            <ul className="list-disc list-inside max-h-40 overflow-auto">
-              {txs.map((tx, idx) => (
-                <li key={idx}>
-                  <a href={`https://testnet-blockexplorer.helachain.com/tx/${tx}`} target="_blank" rel="noopener noreferrer">
-                    {tx}
-                  </a>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </>
-      )}
-    </div>
+        <div className="mt-12 grid grid-cols-3 gap-12 max-w-3xl mx-auto">
+          {[
+            { value: account ? `${policies.length}` : "1,000+", label: "Active Policies" },
+            { value: "$5M+", label: "Protected Value" },
+            { value: "100%", label: "Verified Claims Paid" },
+          ].map((stat, i) => (
+            <div key={i} className="border-t border-foreground pt-4">
+              <div className="text-3xl font-bold mb-1">{stat.value}</div>
+              <div className="text-sm text-muted-foreground">{stat.label}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Policy Management Modal would go here */}
+      </div>
+
+      <div className="absolute bottom-12 left-1/2 -translate-x-1/2">
+        <div className="w-6 h-10 border-2 border-foreground rounded-full flex items-start justify-center p-2">
+          <div className="w-1 h-2 bg-foreground rounded-full animate-bounce" />
+        </div>
+      </div>
+    </section>
   );
 };
 
