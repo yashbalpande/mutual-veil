@@ -1,13 +1,14 @@
 import { ethers } from "ethers";
+import { getContractAddresses } from "@/config/contracts";
 
-const CONTRACT_ADDRESSES = {
-  mockStablecoin: "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-  governanceToken: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512",
-  riskPool: "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0",
-  coveragePolicy: "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9",
-  oracleAdapter: "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9",
-  payoutEngine: "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707",
-};
+abstract class BaseService {
+  protected addresses: ReturnType<typeof getContractAddresses>;
+
+  constructor(signer: ethers.JsonRpcSigner) {
+    const chainId = Number((signer.provider as ethers.JsonRpcProvider)._network.chainId);
+    this.addresses = getContractAddresses(chainId);
+  }
+}
 
 const ABIS = {
   riskPool: [
@@ -41,14 +42,15 @@ const ABIS = {
   ],
 };
 
-export class RiskPoolService {
+export class RiskPoolService extends BaseService {
   private contract: ethers.Contract;
   private stablecoin: ethers.Contract;
 
   constructor(signer: ethers.JsonRpcSigner) {
-    this.contract = new ethers.Contract(CONTRACT_ADDRESSES.riskPool, ABIS.riskPool, signer);
+    super(signer);
+    this.contract = new ethers.Contract(this.addresses.riskPool, ABIS.riskPool, signer);
     this.stablecoin = new ethers.Contract(
-      CONTRACT_ADDRESSES.mockStablecoin,
+      this.addresses.mockStablecoin,
       ["function approve(address spender, uint256 amount) external returns (bool)"],
       signer
     );
@@ -57,7 +59,7 @@ export class RiskPoolService {
   async deposit(amount: string) {
     const parsedAmount = ethers.parseUnits(amount, 18);
     // First approve the risk pool to spend stablecoins
-    const approveTx = await this.stablecoin.approve(CONTRACT_ADDRESSES.riskPool, parsedAmount);
+    const approveTx = await this.stablecoin.approve(this.addresses.riskPool, parsedAmount);
     await approveTx.wait();
     // Then deposit
     const tx = await this.contract.deposit(parsedAmount);
@@ -96,17 +98,17 @@ export class RiskPoolService {
   }
 }
 
-export class PolicyService {
+export class PolicyService extends BaseService {
   private contract: ethers.Contract;
   private stablecoin: ethers.Contract;
-
   private signer: ethers.JsonRpcSigner;
 
   constructor(signer: ethers.JsonRpcSigner) {
+    super(signer);
     this.signer = signer;
-    this.contract = new ethers.Contract(CONTRACT_ADDRESSES.coveragePolicy, ABIS.coveragePolicy, signer);
+    this.contract = new ethers.Contract(this.addresses.coveragePolicy, ABIS.coveragePolicy, signer);
     this.stablecoin = new ethers.Contract(
-      CONTRACT_ADDRESSES.mockStablecoin,
+      this.addresses.mockStablecoin,
       ["function approve(address spender, uint256 amount) external returns (bool)"],
       signer
     );
@@ -117,7 +119,7 @@ export class PolicyService {
     const premium = (parsedAmount * BigInt(10)) / BigInt(100); // 10% premium
     
     // Approve premium payment
-    const approveTx = await this.stablecoin.approve(CONTRACT_ADDRESSES.coveragePolicy, premium);
+    const approveTx = await this.stablecoin.approve(this.addresses.coveragePolicy, premium);
     await approveTx.wait();
     
     // Get signer's address
@@ -177,11 +179,12 @@ export class PolicyService {
   }
 }
 
-export class ClaimsService {
+export class ClaimsService extends BaseService {
   private contract: ethers.Contract;
 
   constructor(signer: ethers.JsonRpcSigner) {
-    this.contract = new ethers.Contract(CONTRACT_ADDRESSES.payoutEngine, ABIS.claims, signer);
+    super(signer);
+    this.contract = new ethers.Contract(this.addresses.payoutEngine, ABIS.claims, signer);
   }
 
   async submitClaim(policyId: number, evidence: string) {
@@ -204,11 +207,12 @@ export class ClaimsService {
   }
 }
 
-export class GovernanceService {
+export class GovernanceService extends BaseService {
   private contract: ethers.Contract;
 
   constructor(signer: ethers.JsonRpcSigner) {
-    this.contract = new ethers.Contract(CONTRACT_ADDRESSES.governanceToken, ABIS.governance, signer);
+    super(signer);
+    this.contract = new ethers.Contract(this.addresses.governanceToken, ABIS.governance, signer);
   }
 
   async createProposal(description: string, data: string) {
