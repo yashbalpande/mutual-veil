@@ -1,10 +1,17 @@
 import React, { useState, useEffect } from "react";
 import { ethers, BrowserProvider, JsonRpcSigner } from "ethers";
 import { Button } from "./ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import { PolicyDetailsModal } from "./PolicyDetailsModal";
+import { Badge } from "./ui/badge";
 
 declare global {
   interface Window {
-    ethereum?: any;
+    ethereum?: {
+      request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+      on: (event: string, callback: (accounts: string[]) => void) => void;
+      removeListener: (event: string, callback: (accounts: string[]) => void) => void;
+    };
   }
 }
 
@@ -24,9 +31,20 @@ const Hero = () => {
   const [signer, setSigner] = useState<JsonRpcSigner | null>(null);
   const [account, setAccount] = useState<string | null>(null);
   const [txs, setTxs] = useState<string[]>([]);
-  const [policies, setPolicies] = useState<Array<{id: number, amountInsured: string}>>([]);
+  interface PolicyDetails {
+    riskId: bigint;
+    amountInsured: bigint;
+    termEnd: bigint;
+    premiumPaid: bigint;
+    active: boolean;
+  }
+  
+  const [policies, setPolicies] = useState<Array<{id: number, amountInsured: string, details?: PolicyDetails}>>([]);
   const [buyAmount, setBuyAmount] = useState<string>("100");
   const [oracleData, setOracleData] = useState<string>("");
+  const [selectedPolicy, setSelectedPolicy] = useState<(typeof policies)[0] | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [riskType, setRiskType] = useState<"1" | "2" | "3">("1");
 
   useEffect(() => {
     if (window.ethereum) {
@@ -92,7 +110,17 @@ const Hero = () => {
       const balance = await coveragePolicy.balanceOf(userAddress, i);
       if (balance > 0n) {
         const policy = await coveragePolicy.policies(i);
-        loadedPolicies.push({ id: i, amountInsured: ethers.formatUnits(policy.amountInsured, 18) });
+        loadedPolicies.push({
+          id: i,
+          amountInsured: ethers.formatUnits(policy.amountInsured, 18),
+          details: {
+            riskId: policy.riskId,
+            amountInsured: policy.amountInsured,
+            termEnd: policy.termEnd,
+            premiumPaid: policy.premiumPaid,
+            active: policy.active
+          }
+        });
       }
     }
     setPolicies(loadedPolicies);
@@ -109,13 +137,36 @@ const Hero = () => {
       "function mintPolicy(address to, uint256 riskId, uint256 amountInsured, uint256 termDuration, uint256 premiumPaid) external returns (uint256)"
     ];
     const coveragePolicy = new ethers.Contract(CONTRACT_ADDRESSES.coveragePolicy, coveragePolicyAbi, signer);
-    // For MVP, use riskId=1, termDuration=30 days, premiumPaid = amount * 0.1 (10%)
-    const premiumPaid = amount / 10n;
-    const tx = await coveragePolicy.mintPolicy(account, 1, amount, 30n * 24n * 3600n, premiumPaid);
-    await tx.wait();
-    trackTx(tx.hash);
-    alert(`Policy purchased for amount ${buyAmount}`);
-    await loadPolicies(account, signer);
+    
+    // Calculate premium based on risk type
+    const premiumRates = {
+      "1": 10n, // 10% for smart contract cover
+      "2": 15n, // 15% for stablecoin depeg
+      "3": 12n, // 12% for oracle failure
+    };
+    
+    const premiumRate = premiumRates[riskType];
+    const premiumPaid = (amount * premiumRate) / 100n;
+    
+    try {
+      const tx = await coveragePolicy.mintPolicy(
+        account,
+        BigInt(riskType),
+        amount,
+        30n * 24n * 3600n, // 30 days duration
+        premiumPaid
+      );
+      await tx.wait();
+      trackTx(tx.hash);
+      alert(`Successfully purchased policy for ${buyAmount} USDC with ${Number(premiumRate)}% premium`);
+      await loadPolicies(account, signer);
+    } catch (error) {
+      if (error instanceof Error) {
+        alert(`Failed to purchase policy: ${error.message}`);
+      } else {
+        alert('Failed to purchase policy: Unknown error');
+      }
+    }
   };
 
   // Transfer policy to another address (sell)
@@ -202,22 +253,81 @@ const Hero = () => {
           ) : (
             <div className="flex flex-col items-center gap-4">
               <p className="text-sm text-muted-foreground">Connected: {account.slice(0, 6)}...{account.slice(-4)}</p>
-              <div className="flex gap-4">
-                <Button
-                  size="lg"
-                  className="text-lg px-8 py-6 rounded-none hover:scale-105 transition-transform"
-                  onClick={() => depositStablecoin()}
-                >
-                  Deposit to Risk Pool
-                </Button>
-                <Button
-                  size="lg"
-                  variant="outline"
-                  className="text-lg px-8 py-6 rounded-none hover:scale-105 transition-transform"
-                  onClick={() => buyPolicy()}
-                >
-                  Get Coverage
-                </Button>
+              <div className="space-y-6">
+                <div className="flex gap-4 justify-center">
+                  <Button
+                    size="lg"
+                    className="text-lg px-8 py-6 rounded-none hover:scale-105 transition-transform"
+                    onClick={() => depositStablecoin()}
+                  >
+                    Deposit to Risk Pool
+                  </Button>
+                  <Button
+                    size="lg"
+                    variant="outline"
+                    className="text-lg px-8 py-6 rounded-none hover:scale-105 transition-transform"
+                    onClick={() => buyPolicy()}
+                  >
+                    Get Coverage
+                  </Button>
+                </div>
+
+                {policies.length > 0 && (
+                  <div className="mt-8 space-y-4">
+                    <h3 className="text-xl font-semibold">Your Active Policies</h3>
+                    <div className="grid gap-4 max-w-2xl mx-auto">
+                      {policies.map((policy) => (
+                        <div
+                          key={policy.id}
+                          className="p-4 border rounded-lg flex items-center justify-between hover:bg-accent/50 transition-colors cursor-pointer"
+                          onClick={() => {
+                            setSelectedPolicy(policy);
+                            setIsModalOpen(true);
+                          }}
+                        >
+                          <div className="flex items-center gap-4">
+                            <Badge variant={policy.details?.active ? "default" : "destructive"}>
+                              Policy #{policy.id}
+                            </Badge>
+                            <span className="text-muted-foreground">
+                              {policy.amountInsured} USDC
+                            </span>
+                          </div>
+                          <Button variant="ghost" size="sm">
+                            View Details
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* New Policy Form */}
+                <div className="mt-8 max-w-md mx-auto">
+                  <h3 className="text-xl font-semibold mb-4">Get New Coverage</h3>
+                  <div className="space-y-4">
+                    <Select value={riskType} onValueChange={(value: "1" | "2" | "3") => setRiskType(value)}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select risk type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="1">Smart Contract Cover</SelectItem>
+                        <SelectItem value="2">Stablecoin Depeg</SelectItem>
+                        <SelectItem value="3">Oracle Failure</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <div className="flex gap-4">
+                      <input
+                        type="number"
+                        value={buyAmount}
+                        onChange={(e) => setBuyAmount(e.target.value)}
+                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                        placeholder="Coverage amount"
+                      />
+                      <Button onClick={buyPolicy}>Buy Policy</Button>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -226,8 +336,8 @@ const Hero = () => {
         <div className="mt-12 grid grid-cols-3 gap-12 max-w-3xl mx-auto">
           {[
             { value: account ? `${policies.length}` : "1,000+", label: "Active Policies" },
-            { value: "$5M+", label: "Protected Value" },
-            { value: "100%", label: "Verified Claims Paid" },
+            { value: "$5M+", label: "Total Protected Value" },
+            { value: "100%", label: "Claims Success Rate" },
           ].map((stat, i) => (
             <div key={i} className="border-t border-foreground pt-4">
               <div className="text-3xl font-bold mb-1">{stat.value}</div>
@@ -236,7 +346,11 @@ const Hero = () => {
           ))}
         </div>
 
-        {/* Policy Management Modal would go here */}
+        <PolicyDetailsModal
+          isOpen={isModalOpen}
+          onClose={() => setIsModalOpen(false)}
+          policy={selectedPolicy}
+        />
       </div>
 
       <div className="absolute bottom-12 left-1/2 -translate-x-1/2">
