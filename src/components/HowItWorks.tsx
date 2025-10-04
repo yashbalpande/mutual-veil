@@ -4,27 +4,27 @@ import { useRef } from "react";
 const steps = [
   {
     number: "01",
-    title: "Pool Capital",
+    title: "Join the Community",
     description:
-      "Contributors deposit stablecoins into specialized risk pools. Capital is segmented by risk type and geography.",
+      "Become a member by staking assets in our risk-sharing pools. Choose from different coverage types based on your needs.",
   },
   {
     number: "02",
-    title: "Purchase Coverage",
+    title: "Get Protected",
     description:
-      "Users buy fractional coverage through ERC-1155 policy NFTs. Premiums are calculated dynamically based on real-time risk metrics.",
+      "Secure your coverage with our smart contract-backed NFT policies. Enjoy transparent pricing based on real-world risk analysis.",
   },
   {
     number: "03",
-    title: "Oracle Monitoring",
+    title: "Smart Verification",
     description:
-      "Multi-source parametric oracles continuously monitor trigger conditions via satellite data, weather APIs, and on-chain telemetry.",
+      "Our decentralized oracle network monitors claims conditions using multiple trusted data sources to ensure fair and accurate verification.",
   },
   {
     number: "04",
-    title: "Automatic Payout",
+    title: "Instant Claims",
     description:
-      "When oracle thresholds are met, smart contracts execute immediate payouts. No manual claims processing required.",
+      "Once verified, smart contracts automatically process and pay your claim. No paperwork, no waiting periods, just instant protection.",
   },
 ];
 
